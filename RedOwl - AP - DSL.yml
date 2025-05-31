@@ -1,14 +1,91 @@
-# Invoice Validation SOP - Domain Specific Language Definition
-# Version: 2.0.0
-# Last Updated: 2025-05-28
+# Invoice Validation Execution Plan - Domain Specific Language
+# Version: 3.2.0
+# Last Updated: 2025-05-29
 
-dsl_metadata:
-  name: "Invoice Validation DSL"
-  version: "2.0.0"
-  description: "Domain Specific Language for PDF invoice validation with policy-driven processing"
-  schema_version: "2.0"
+metadata:
+  name: "Invoice Validation Execution Plan"
+  version: "3.2.0"
+  description: "Comprehensive DSL for invoice validation workflow with externalized business configurations"
+  schema_version: "3.2"
+  created_by: "Finance Automation Team"
+  last_modified: "2025-05-29T10:00:00Z"
+  usage_context: "AI-driven agentic workflow for automated invoice processing"
 
-# Data Models
+# External Configuration Reference
+external_config:
+  description: "All frequently changing business values stored externally"
+  source: "config/business_rules.yaml"
+  refresh_interval: "24h"
+  includes:
+    - "amount_thresholds"
+    - "tolerance_percentages"
+    - "time_windows"
+    - "approval_limits"
+    - "vendor_classifications"
+    - "discount_rates"
+    - "tax_configurations"
+
+# YAML Anchors and References for reusability
+references:
+  common_fields: &common_fields
+    id:
+      type: "string"
+      required: true
+      format: "UUID"
+      description: "Unique identifier"
+    timestamp:
+      type: "timestamp"
+      required: true
+      format: "ISO8601"
+      description: "Creation timestamp"
+    version:
+      type: "string"
+      required: true
+      description: "Schema version"
+  
+  base_acceptance_criteria: &base_acceptance_criteria
+    - "All required fields populated"
+    - "Data integrity verified"
+    - "Audit trail created"
+    - "Schema validation passed"
+  
+  standard_outputs: &standard_outputs
+    success:
+      status: "completed"
+      next_node: "auto"
+      data_persisted: true
+    partial:
+      status: "partial"
+      requires_review: true
+      next_node: "conditional"
+    failure:
+      status: "failed"
+      retry_allowed: true
+      escalation_required: true
+    skip:
+      status: "skipped"
+      reason: "required"
+      next_node: "specified"
+
+# Global Execution Context
+global_context:
+  description: "Runtime context flowing through entire execution"
+  doctype_supported:
+    - "invoice"
+    - "credit_note"
+    - "debit_note"
+  vendor_categories:
+    - "goods_supplier"
+    - "service_provider"
+    - "contractor"
+    - "consultant"
+  environment:
+    timezone: "UTC"
+    date_format: "YYYY-MM-DD"
+    currency_default: "${config.base_currency}"
+    locale: "en_US"
+
+# Comprehensive Data Models
 data_models:
   sop_context:
     fields:
@@ -239,145 +316,533 @@ data_models:
         type: "timestamp"
         required: true
 
-# External Sources
+
+# External System Configurations
 external_systems:
   metastore:
     type: "database"
     connection_type: "postgres"
+    connection_string: "${env.METASTORE_CONNECTION}"
     schema: "invoice_metadata"
-
+    description: "Primary metadata storage for invoice processing"
+    
   document_store:
     type: "object_storage"
     provider: "s3"
-    bucket: "invoice-documents"
-
-  knowledge_index_manager:
+    description: "Document binary storage"
+    
+  knowledge_index:
     type: "search_engine"
     provider: "elasticsearch"
-    index: "invoice_knowledge"
-
-  policy_store:
-    type: "policy_engine"
+    endpoint: "${env.ELASTIC_ENDPOINT}"
+    index_prefix: "invoice_"
+    description: "Searchable knowledge base for invoice data"
+    
+  policy_engine:
+    type: "rules_engine"
     provider: "policy_agent"
+    endpoint: "${env.POLICY_ENGINE_ENDPOINT}"
     namespace: "tenant.policies"
-    policy_categories:
-      - "company_accounting_payment"
-      - "vendor_policies"
-      - "sop_policies"
-      - "compliance_policies"
-      - "regulatory_policies"
+    description: "Centralized policy management system"
 
-# Main SOP Workflow
-sop_workflow:
-  id: "invoice_validation_sop"
-  name: "Invoice Validation Standard Operating Procedure"
+# Policy Framework
+policy_framework:
+  company_policies:
+    description: "Organization-wide business rules"
+    location: "${external_config.source}/company_policies.yaml"
+    categories:
+      tolerance_rules:
+        description: "Amount tolerance by invoice value ranges"
+        config_ref: "company_policies.tolerance"
+      discount_policies:
+        description: "Early payment and volume discounts"
+        config_ref: "company_policies.discounts"
+      bulk_payment_rules:
+        description: "Bulk payment eligibility"
+        config_ref: "company_policies.bulk_payments"
+      delegation_matrix:
+        description: "Approval delegation rules"
+        config_ref: "company_policies.delegation"
 
-  sop_nodes:
+  vendor_policies:
+    description: "Vendor-specific agreement terms"
+    location: "${external_config.source}/vendor_policies.yaml"
+    categories:
+      payment_terms:
+        description: "Vendor-specific payment terms"
+        config_ref: "vendor_policies.payment_terms"
+      approval_limits:
+        description: "Auto-approval thresholds by vendor"
+        config_ref: "vendor_policies.approval_limits"
+      special_agreements:
+        description: "Custom vendor agreements"
+        config_ref: "vendor_policies.special_terms"
+
+accounting_policies:
+  description: "Document matching configurations and rules"
+  location: "${external_config.source}/accounting_policies.yaml"
+  
+  matching_types:
+    two_way_matching:
+      description: "Invoice to Purchase Order matching"
+      required_documents:
+        - document: "invoice"
+          role: "primary"
+          required_fields: ["invoice_number", "vendor_id", "total_amount", "line_items"]
+        - document: "purchase_order"
+          role: "reference"
+          required_fields: ["po_number", "vendor_id", "total_amount", "line_items"]
+      
+      matching_characteristics:
+        vendor_validation:
+          field: "vendor_id"
+          match_type: "exact"
+          comparison: "invoice.vendor_id == purchase_order.vendor_id"
+          weight: 1.0
+          required: true
+        
+        po_reference:
+          field: "po_number"
+          match_type: "exact"
+          comparison: "invoice.po_number == purchase_order.po_number"
+          weight: 0.9
+          required: true
+        
+        header_amount:
+          field: "total_amount"
+          match_type: "tolerance"
+          comparison: "abs(invoice.total_amount - purchase_order.total_amount)"
+          tolerance_type: "percentage"
+          tolerance_value: "${config.header_amount_tolerance}"
+          weight: 0.8
+          required: true
+        
+        line_items:
+          match_type: "line_by_line"
+          matching_strategy: "best_fit"
+          line_matching_fields:
+            - field: "item_code"
+              match_type: "exact"
+              required: false
+            - field: "description"
+              required: false
+            - field: "quantity"
+              required: true
+            - field: "unit_price"
+              required: true
+          aggregation_method: "weighted_average"
+          minimum_line_match_score: 0.8
+          unmatched_lines_allowed: false
+    
+    three_way_matching:
+      description: "Invoice to Purchase Order to Goods Receipt matching"
+      required_documents:
+        - document: "invoice"
+          role: "primary"
+          required_fields: ["invoice_number", "vendor_id", "total_amount", "line_items"]
+        - document: "purchase_order"
+          role: "reference"
+          required_fields: ["po_number", "vendor_id", "ordered_quantity", "line_items"]
+        - document: "goods_receipt_note"
+          role: "reference"
+          required_fields: ["grn_number", "po_number", "received_quantity", "line_items"]
+      
+      matching_characteristics:
+        vendor_validation:
+          field: "vendor_id"
+          match_type: "exact"
+          comparison: "invoice.vendor_id == purchase_order.vendor_id"
+          required: true
+        
+        po_reference_validation:
+          field: "po_number"
+          match_type: "exact"
+          comparison: "invoice.po_number == purchase_order.po_number == goods_receipt_note.po_number"
+          required: true
+        
+        quantity_reconciliation:
+          match_type: "three_way_quantity"
+          comparisons:
+            - name: "ordered_vs_received"
+              calculation: "goods_receipt_note.received_quantity <= purchase_order.ordered_quantity"
+              required: true
+            - name: "invoiced_vs_received"
+              calculation: "invoice.quantity == goods_receipt_note.received_quantity"
+              tolerance_type: "percentage"
+              required: true
+            - name: "invoiced_vs_ordered"
+              calculation: "invoice.quantity <= purchase_order.ordered_quantity"
+              required: true
+        
+        amount_reconciliation:
+          match_type: "calculated"
+          calculation: "invoice.line_total == (goods_receipt_note.received_quantity * purchase_order.unit_price)"
+          required: true
+        
+        line_items:
+          match_type: "three_way_line"
+          matching_sequence:
+            - step: 1
+              match: "po_lines_to_grn_lines"
+              by_field: "item_code"
+              create_mapping: true
+            - step: 2
+              match: "grn_lines_to_invoice_lines"
+              use_mapping: true
+              by_fields: ["item_code", "description"]
+          line_validations:
+            - validation: "quantity_consistency"
+              rule: "invoice_line.quantity == grn_line.quantity"
+            - validation: "price_consistency"
+              rule: "invoice_line.unit_price == po_line.unit_price"
+            - validation: "amount_calculation"
+              rule: "invoice_line.total == (invoice_line.quantity * invoice_line.unit_price)"
+          partial_delivery_allowed: true
+    
+    contract_based_matching:
+      description: "Invoice to Contract matching for service providers"
+      required_documents:
+        - document: "invoice"
+          role: "primary"
+          required_fields: ["invoice_number", "vendor_id", "total_amount", "service_period"]
+        - document: "vendor_contract"
+          role: "reference"
+          required_fields: ["contract_id", "vendor_id", "contract_value", "payment_schedule"]
+      
+      matching_characteristics:
+        vendor_validation:
+          field: "vendor_id"
+          match_type: "exact"
+          comparison: "invoice.vendor_id == vendor_contract.vendor_id"
+          required: true
+        
+        contract_reference:
+          field: "contract_id"
+          match_type: "exact"
+          comparison: "invoice.contract_ref == vendor_contract.contract_id"
+          required: true
+        
+        service_period_validation:
+          match_type: "date_range"
+          comparison: "invoice.service_period WITHIN vendor_contract.contract_period"
+          required: true
+        
+        payment_schedule_validation:
+          match_type: "schedule"
+          validations:
+            - check: "milestone_match"
+              rule: "invoice.milestone_ref EXISTS IN vendor_contract.payment_milestones"
+            - check: "amount_match"
+              rule: "invoice.amount == vendor_contract.milestone.amount"
+              tolerance_allowed: true
+            - check: "cumulative_check"
+              rule: "SUM(invoices.amount) <= vendor_contract.total_value"
+          required: true
+    
+    no_po_matching:
+      description: "Invoice validation without PO for approved vendors"
+      required_documents:
+        - document: "invoice"
+          role: "primary"
+          required_fields: ["invoice_number", "vendor_id", "total_amount"]
+        - document: "vendor_master"
+          role: "reference"
+          required_fields: ["vendor_id", "no_po_allowed", "approval_limit"]
+      
+      matching_characteristics:
+        vendor_validation:
+          field: "vendor_id"
+          match_type: "exact"
+          comparison: "invoice.vendor_id == vendor_master.vendor_id"
+          required: true
+        
+        no_po_authorization:
+          match_type: "boolean"
+          comparison: "vendor_master.no_po_allowed == true"
+          required: true
+        
+        amount_limit_check:
+          match_type: "threshold"
+          comparison: "invoice.total_amount <= vendor_master.no_po_limit"
+          required: true
+        
+        expense_category_validation:
+          match_type: "lookup"
+          comparison: "invoice.expense_category IN vendor_master.allowed_categories"
+          required: true
+
+  matching_rules_application:
+    rule_selection_logic:
+      - condition: "vendor.requires_three_way_match == true"
+        apply: "three_way_matching"
+      - condition: "vendor.type == 'service_provider' AND vendor.has_contract == true"
+        apply: "contract_based_matching"
+      - condition: "invoice.po_number != null"
+        apply: "two_way_matching"
+      - condition: "vendor.no_po_allowed == true AND invoice.amount <= vendor.no_po_limit"
+        apply: "no_po_matching"
+      - default: "manual_review"
+
+  document_relationships:
+    purchase_order_lifecycle:
+      states: ["draft", "approved", "partially_received", "fully_received", "closed"]
+      valid_for_matching: ["approved", "partially_received"]
+      quantity_tracking:
+        ordered_quantity: "po.line_items.quantity"
+        received_quantity: "SUM(grn.line_items.quantity)"
+        invoiced_quantity: "SUM(invoice.line_items.quantity)"
+        remaining_quantity: "ordered_quantity - received_quantity"
+    
+    goods_receipt_validation:
+      required_fields: ["grn_number", "po_reference", "received_date", "received_by"]
+      date_validation: "grn.received_date >= po.order_date"
+      quantity_validation: "grn.total_quantity <= po.remaining_quantity"
+    
+    invoice_prerequisites:
+      for_goods:
+        - "purchase_order.status IN ['approved', 'partially_received']"
+        - "goods_receipt_note.status == 'posted'"
+        - "invoice.date >= goods_receipt_note.date"
+      for_services:
+        - "contract.status == 'active'"
+        - "invoice.service_period <= current_date"
+        - "milestone.status == 'completed' (if milestone_based)"
+
+  domain_understanding:
+    description: "Business domain knowledge and constraints"
+    location: "${external_config.source}/domain_rules.yaml"
+    categories:
+      duplicate_detection:
+        description: "Duplicate invoice detection rules"
+        config_ref: "domain_rules.duplicates"
+      date_validations:
+        description: "Date-related business rules"
+        config_ref: "domain_rules.dates"
+      amount_validations:
+        description: "Amount-related constraints"
+        config_ref: "domain_rules.amounts"
+      vendor_validations:
+        description: "Vendor-specific validations"
+        config_ref: "domain_rules.vendors"
+
+  fraud_detection:
+    description: "Fraud detection patterns and rules"
+    location: "${external_config.source}/fraud_rules.yaml"
+    categories:
+      pattern_detection:
+        description: "Suspicious pattern identification"
+        config_ref: "fraud_rules.patterns"
+      threshold_monitoring:
+        description: "Threshold-based fraud detection"
+        config_ref: "fraud_rules.thresholds"
+      velocity_checks:
+        description: "Transaction velocity monitoring"
+        config_ref: "fraud_rules.velocity"
+      anomaly_detection:
+        description: "ML-based anomaly detection"
+        config_ref: "fraud_rules.anomalies"
+
+# Main Execution Plan
+execution_plan:
+  id: "invoice_validation_v3"
+  display_name: "Invoice Validation Workflow"
+  description: "Complete invoice validation workflow from intake to approval"
+  
+  nodes:
+    # Node 1: Initialization
     - node:
-        id: "sop_start"
-        name: "Start SOP with Document Upload"
-        type: "initialization"
-        description: "Initialize SOP with document upload and environment understanding"
+        id: "initialization"
+        display_name: "Initialize Execution"
+        type: "start"
+        metadata:
+          description: "Initialize execution context and retrieve document metadata from metastore"
+          agent_instructions: "This is the entry point. Establish complete execution context before proceeding."
+          critical: true
+        
+        can_skip:
+          condition: "false"
+          requires_approval: false
+          reason: "Initialization is mandatory"
+        
+        node_rules:
+          - "Document must exist in metastore"
+          - "Vendor must be active in system"
+          - "User must have processing permissions"
+          - "Execution context must be complete"
         
         acceptance_criteria:
-          - "Valid PDF document uploaded successfully"
-          - "SOP context established with all required fields"
-          - "Environment validation completed"
+          - "All required fields populated"
+          - "Data integrity verified"
+          - "Audit trail created"
+          - "Schema validation passed"
+          - "Execution context initialized with all required fields"
+          - "Document metadata retrieved from metastore"
+          - "Vendor context validated and loaded"
           - "Initial policies loaded based on context"
+          - "External configurations accessible"
         
-        sub_processes:
+        execution_plan:
           - process:
-              id: "document_upload"
-              name: "Document Upload"
-              
-              acceptance_criteria:
-                - "PDF file validated and not corrupted"
-                - "File size within acceptable limits"
-                - "Document stored in document store"
-                - "Unique document ID generated"
+              id: "retrieve_metadata"
+              display_name: "Retrieve Document Metadata"
+              metadata:
+                description: "Fetch invoice metadata from metastore and validate completeness"
+                agent_instructions: "Query metastore for complete invoice metadata including all related entities"
+                retry_on_failure: true
               
               actions:
                 - action:
-                    id: "upload_pdf_document"
-                    type: "file_upload"
+                    id: "fetch_from_metastore"
+                    display_name: "Fetch Metadata"
+                    type: "data_retrieval"
                     
                     acceptance_criteria:
-                      - "File successfully received"
-                      - "File extension is .pdf"
+                      - "Metadata exists in metastore"
+                      - "Metadata schema validated"
+                      - "All required fields present"
+                      - "Data integrity verified"
+                    
+                    operations:
+                      - operation: "query_metastore"
+                        context:
+                          purpose: "Retrieve complete invoice metadata for processing"
+                          data_needed: ["invoice_header", "line_items", "vendor_info", "attachments"]
+                          validation_required: true
+                          include_history: false
+                        params:
+                          document_id: "${input.document_id}"
+                          include_line_items: true
+                          include_vendor_context: true
+                          include_attachments: true
+                          lock_for_processing: true
+                      
+                      - operation: "validate_metadata_integrity"
+                        context:
+                          purpose: "Ensure metadata is complete and valid"
+                          validation_level: "strict"
+                        params:
+                          schema_version: "${metadata.schema_version}"
+                          required_fields_check: true
+                          checksum_validation: true
                     
                     outputs:
                       success:
-                        - "document_id"
-                        - "storage_location"
-                        - "file_metadata"
-                        - "upload_timestamp"
-                      failure:
-                        - "error_code"
-                        - "error_message"
-                        - "validation_failures"
+                        conditions:
+                          - "metadata.status == 'active'"
+                          - "metadata.validation_passed == true"
+                        data:
+                          - "invoice_metadata"
+                          - "line_items"
+                          - "vendor_context"
+                          - "extraction_confidence"
+                        next_action: "build_context"
                       partial:
-                        - "document_id"
-                        - "warnings"
-                        - "retry_needed"
+                        conditions:
+                          - "metadata.status == 'incomplete'"
+                          - "metadata.critical_fields_present == true"
+                        data:
+                          - "available_metadata"
+                          - "missing_fields"
+                          - "completion_percentage"
+                        requires_review: true
+                        next_action: "metadata_completion"
+                      failure:
+                        error_types:
+                          - "document_not_found"
+                          - "metadata_corrupted"
+                          - "access_denied"
+                          - "lock_acquisition_failed"
+                        data:
+                          - "error_details"
+                          - "suggested_actions"
+                        next_action: "error_handler"
+                      skip:
+                        condition: "bypass_initialization == true AND has_override_permission == true"
+                        next_node: "validation"
 
           - process:
-              id: "environment_understanding"
-              name: "Establish SOP Context"
-              
-              acceptance_criteria:
-                - "Document type correctly identified"
-                - "Vendor context fully populated"
-                - "Organization data retrieved"
-                - "All required policies accessible"
+              id: "context_building"
+              display_name: "Build Execution Context"
+              metadata:
+                description: "Construct complete execution context with all necessary references"
+                agent_instructions: "Aggregate all context data and load applicable policies"
               
               actions:
                 - action:
-                    id: "extract_initial_metadata"
-                    type: "quick_extraction"
-                    
-                    acceptance_criteria:
-                      - "Vendor identification successful"
-                      - "Document type determined"
-                      - "Basic metadata extracted"
-
-                    outputs:
-                      success:
-                        - "preliminary_vendor_id"
-                        - "document_type"
-                        - "extraction_confidence"
-                      failure:
-                        - "extraction_errors"
-                        - "manual_review_required"
-                
-                - action:
-                    id: "build_sop_context"
+                    id: "build_context"
+                    display_name: "Create Execution Context"
                     type: "context_creation"
                     
                     acceptance_criteria:
-                      - "Vendor validated against master data"
-                      - "Organization context complete"
-                      - "Initial policy set loaded"
+                      - "All context fields populated"
+                      - "Policy references resolved"
+                      - "External configs loaded"
+                      - "Vendor validation passed"
+                    
+                    operations:
+                      - operation: "create_execution_context"
+                        context:
+                          purpose: "Establish runtime context for workflow execution"
+                          includes_external_data: true
+                        params:
+                          document_metadata: "${fetch_from_metastore.invoice_metadata}"
+                          vendor_data: "${fetch_from_metastore.vendor_context}"
+                          org_data: "${system.org_context}"
+                          execution_mode: "${input.execution_mode || 'standard'}"
+                          priority: "${input.priority || 'normal'}"
+                          initiated_by: "${system.current_user}"
+                      
+                      - operation: "validate_vendor_status"
+                        context:
+                          purpose: "Ensure vendor is eligible for processing"
+                          validation_type: "business_rule"
+                        params:
+                          vendor_id: "${vendor_context.vendor_id}"
+                          check_active_status: true
+                          check_block_list: true
+                          check_compliance: true
+                      
+                      - operation: "load_applicable_policies"
+                        context:
+                          purpose: "Load all policies applicable to this execution"
+                          policy_resolution: "hierarchical"
+                        params:
+                          vendor_category: "${vendor_context.vendor_category}"
+                          vendor_tier: "${vendor_context.vendor_tier}"
+                          document_type: "${document_metadata.document_type}"
+                          invoice_amount: "${invoice_metadata.total_amount}"
+                          policy_domains: ["company", "vendor", "accounting", "domain", "fraud"]
+                          include_overrides: true
+                      
+                      - operation: "load_external_configs"
+                        context:
+                          purpose: "Load frequently changing configuration values"
+                          cache_enabled: true
+                        params:
+                          config_source: "${external_config.source}"
+                          required_configs: ["thresholds", "tolerances", "limits"]
+                          environment: "${system.environment}"
                     
                     outputs:
                       success:
-                        - "sop_context"
-                        - "applicable_policies"
-                        - "context_id"
+                        conditions:
+                          - "context.complete == true"
+                          - "policies.loaded == true"
+                          - "vendor.status == 'active'"
+                        data:
+                          - "execution_context"
+                          - "loaded_policies"
+                          - "config_values"
+                          - "context_id"
                       failure:
-                        - "missing_context_elements"
-                        - "policy_load_errors"
-
-    - node:
-        id: "metadata_extraction"
-        name: "Metadata Extraction"
-        type: "processing"
-        depends_on: ["sop_start"]
-        
-        acceptance_criteria:
-          - "All mandatory fields extracted with confidence > 0.8"
-          - "Line items accurately captured"
-          - "Metadata stored in metastore"
-          - "Knowledge index updated"
+                        error_types:
+                          - "context_creation_failed"
+                          - "vendor_validation_failed"
+                          - "policy_load_error"
+                          - "config_unavailable"
+                        data:
+                          - "error_context"
+                          - "incomplete_elements" # Havent looked from this forward
 
     - node:
         id: "validation_and_matching"
@@ -391,7 +856,7 @@ sop_workflow:
           - "Variances calculated and within tolerance"
           - "Results documented for audit trail"
         
-        sub_processes:
+        execution_plan:
           - process:
               id: "policy_retrieval"
               name: "Retrieve Validation Policies"
@@ -705,7 +1170,7 @@ sop_workflow:
           - "Review decisions captured with justification"
           - "SLA compliance maintained"
         
-        sub_processes:
+        execution_plan:
           - process:
               id: "review_policy_retrieval"
               name: "Retrieve Review Policies"
@@ -743,7 +1208,7 @@ sop_workflow:
           - "Delegation rules followed"
           - "Audit trail maintained"
         
-        sub_processes:
+        execution_plan:
           - process:
               id: "approval_policy_retrieval"
               name: "Retrieve Approval Policies"
@@ -770,56 +1235,4 @@ sop_workflow:
               acceptance_criteria:
                 - "Approval obtained per policy"
                 - "Conditions documented"
-                - "Final status determined"
-          
-
-# Policy Examples
-policy_examples:
-  tolerance_policy:
-    id: "POL-TOL-001"
-    name: "Invoice Amount Tolerance Policy"
-    category: "company_accounting_payment"
-    rules:
-      - condition: "invoice_amount > 100000 AND vendor_tier != 'strategic'"
-        action: "flag_for_executive_review"
-        tolerance_percent: 0
-      - condition: "invoice_amount BETWEEN 50000 AND 100000"
-        action: "require_department_head_approval"
-        tolerance_percent: 2
-      - condition: "vendor_tier == 'preferred'"
-        action: "apply_preferred_vendor_tolerance"
-        tolerance_percent: 5
-
-  matching_policy:
-    id: "POL-MATCH-001"
-    name: "Document Matching Requirements"
-    category: "sop_policies"
-    rules:
-      - condition: "vendor_category == 'goods_supplier' AND invoice_amount > 5000"
-        matching_type: "three_way"
-        documents: ["purchase_order", "goods_receipt_note", "invoice"]
-        tolerance:
-          quantity: 2
-          amount: 3
-      - condition: "vendor_category == 'service_provider'"
-        matching_type: "two_way"
-        documents: ["purchase_order", "invoice"]
-        tolerance:
-          amount: 5
-
-  vendor_policy:
-    id: "POL-VEND-001"
-    name: "Vendor Specific Policies"
-    category: "vendor_policies"
-    vendor_id: "VND-123456"
-    rules:
-      - type: "payment_terms"
-        standard_terms: "NET30"
-        early_payment_discount: 2
-        discount_terms: "2/10 NET30"
-      - type: "invoice_tolerance"
-        amount_tolerance_percent: 5
-        always_three_way_match: false
-      - type: "auto_approval"
-        enabled: true
-        max_amount: 10000
+                - "Final status determined"       

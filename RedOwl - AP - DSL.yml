@@ -1,0 +1,825 @@
+# Invoice Validation SOP - Domain Specific Language Definition
+# Version: 2.0.0
+# Last Updated: 2025-05-28
+
+dsl_metadata:
+  name: "Invoice Validation DSL"
+  version: "2.0.0"
+  description: "Domain Specific Language for PDF invoice validation with policy-driven processing"
+  schema_version: "2.0"
+
+# Data Models
+data_models:
+  sop_context:
+    fields:
+      - name: "context_id"
+        type: "string"
+        required: true
+        format: "UUID"
+      - name: "document_type"
+        type: "string"
+        required: true
+        enum: ["invoice", "credit_note"]
+      - name: "vendor_context"
+        type: "object"
+        required: true
+        schema:
+          vendor_id: "string"
+          vendor_category: "string"
+          vendor_tier: "string"
+          preferred_vendor: "boolean"
+          payment_terms_default: "string"
+      - name: "org_data"  # Not defined Yet, May contain org-specific data like GL accounts, cost centers, employee roles, etc.
+        type: "object"
+        required: true
+        schema:
+          org_id: "string"
+          business_unit: "string"
+          cost_center: "string"
+          approval_hierarchy: "array"
+          fiscal_period: "string"
+      - name: "initiated_timestamp"
+        type: "timestamp"
+        required: true
+      - name: "sop_version"
+        type: "string"
+        required: true
+
+  invoice_metadata:
+    fields:
+      - name: "invoice_id"
+        type: "string"
+        required: true
+        format: "UUID"
+      - name: "invoice_number"
+        type: "string"
+        required: true
+      - name: "vendor_id"
+        type: "string"
+        required: true
+      - name: "vendor_name"
+        type: "string"
+        required: true
+      - name: "invoice_date"
+        type: "date"
+        required: true
+      - name: "due_date"
+        type: "date"
+        required: false
+      - name: "currency"
+        type: "string"
+        required: true
+        default: "AUD"
+      - name: "total_amount"
+        type: "decimal"
+        required: true
+      - name: "tax_amount"
+        type: "decimal"
+        required: false
+      - name: "subtotal_amount"
+        type: "decimal"
+        required: true
+      - name: "payment_terms"
+        type: "string"
+        required: false
+      - name: "po_number"
+        type: "string"
+        required: false
+      - name: "payment_status" # Need to check if this is needed
+        type: "string"
+        required: true
+        enum: ["pending", "paid", "partially_paid", "overdue"]
+      - name: "approval_status"
+        type: "string"
+        required: true
+        enum: ["pending", "approved", "rejected"]
+      - name: "extraction_confidence"
+        type: "decimal"
+        required: true
+      - name: "extracted_timestamp"
+        type: "timestamp"
+        required: true
+
+  line_item:
+    fields:
+      - name: "line_number"
+        type: "integer"
+        required: true
+      - name: "description"
+        type: "string"
+        required: true
+      - name: "quantity"
+        type: "decimal"
+        required: false
+      - name: "unit_price"
+        type: "decimal"
+        required: false
+      - name: "line_total"
+        type: "decimal"
+        required: true
+      - name: "tax_code"
+        type: "string"
+        required: false
+      - name: "gl_account"
+        type: "string"
+        required: true
+      - name: "cost_center"
+        type: "string"
+        required: false
+      - name: "project_code"
+        type: "string"
+        required: false
+
+  validation_result:
+    fields:
+      - name: "validation_id"
+        type: "string"
+        required: true
+      - name: "rule_id"
+        type: "string"
+        required: true
+      - name: "status"
+        type: "enum"
+        values: ["passed", "failed", "warning"]
+        required: true
+      - name: "message"
+        type: "string"
+        required: true
+      - name: "policy_reference"
+        type: "string"
+        required: true
+      - name: "severity"
+        type: "enum"
+        values: ["critical", "high", "medium", "low"]
+        required: true
+      - name: "timestamp"
+        type: "timestamp"
+        required: true
+
+  matching_result:
+    fields:
+      - name: "matching_id"
+        type: "string"
+        required: true
+      - name: "matching_type"
+        type: "enum"
+        values: ["two_way", "three_way", "contract_based"]
+        required: true
+      - name: "documents_matched"
+        type: "array"
+        item_type: "document_reference"
+        required: true
+      - name: "matching_score"
+        type: "decimal"
+        required: true
+      - name: "variances"
+        type: "array"
+        item_type: "variance_detail"
+        required: false
+      - name: "policy_applied"
+        type: "string"
+        required: true
+
+  document_reference:
+    fields:
+      - name: "document_type"
+        type: "enum"
+        values: ["invoice", "purchase_order", "goods_receipt_note", "vendor_contract"]
+        required: true
+      - name: "document_id"
+        type: "string"
+        required: true
+      - name: "document_number"
+        type: "string"
+        required: true
+      - name: "document_date"
+        type: "date"
+        required: true
+
+  variance_detail:
+    fields:
+      - name: "field_name"
+        type: "string"
+        required: true
+      - name: "expected_value"
+        type: "string"
+        required: true
+      - name: "actual_value"
+        type: "string"
+        required: true
+      - name: "variance_amount"
+        type: "decimal"
+        required: true
+      - name: "variance_percentage"
+        type: "decimal"
+        required: true
+      - name: "within_tolerance"
+        type: "boolean"
+        required: true
+
+  review_assignment:
+    fields:
+      - name: "reviewer_id"
+        type: "string"
+        required: true
+      - name: "reviewer_role"
+        type: "string"
+        required: true
+      - name: "assignment_type"
+        type: "enum"
+        values: ["sequential", "parallel"]
+        required: true
+      - name: "sequence_order"
+        type: "integer"
+        required: false
+      - name: "assigned_timestamp"
+        type: "timestamp"
+        required: true
+      - name: "due_timestamp"
+        type: "timestamp"
+        required: true
+
+# External Sources
+external_systems:
+  metastore:
+    type: "database"
+    connection_type: "postgres"
+    schema: "invoice_metadata"
+
+  document_store:
+    type: "object_storage"
+    provider: "s3"
+    bucket: "invoice-documents"
+
+  knowledge_index_manager:
+    type: "search_engine"
+    provider: "elasticsearch"
+    index: "invoice_knowledge"
+
+  policy_store:
+    type: "policy_engine"
+    provider: "policy_agent"
+    namespace: "tenant.policies"
+    policy_categories:
+      - "company_accounting_payment"
+      - "vendor_policies"
+      - "sop_policies"
+      - "compliance_policies"
+      - "regulatory_policies"
+
+# Main SOP Workflow
+sop_workflow:
+  id: "invoice_validation_sop"
+  name: "Invoice Validation Standard Operating Procedure"
+
+  sop_nodes:
+    - node:
+        id: "sop_start"
+        name: "Start SOP with Document Upload"
+        type: "initialization"
+        description: "Initialize SOP with document upload and environment understanding"
+        
+        acceptance_criteria:
+          - "Valid PDF document uploaded successfully"
+          - "SOP context established with all required fields"
+          - "Environment validation completed"
+          - "Initial policies loaded based on context"
+        
+        sub_processes:
+          - process:
+              id: "document_upload"
+              name: "Document Upload"
+              
+              acceptance_criteria:
+                - "PDF file validated and not corrupted"
+                - "File size within acceptable limits"
+                - "Document stored in document store"
+                - "Unique document ID generated"
+              
+              actions:
+                - action:
+                    id: "upload_pdf_document"
+                    type: "file_upload"
+                    
+                    acceptance_criteria:
+                      - "File successfully received"
+                      - "File extension is .pdf"
+                    
+                    outputs:
+                      success:
+                        - "document_id"
+                        - "storage_location"
+                        - "file_metadata"
+                        - "upload_timestamp"
+                      failure:
+                        - "error_code"
+                        - "error_message"
+                        - "validation_failures"
+                      partial:
+                        - "document_id"
+                        - "warnings"
+                        - "retry_needed"
+
+          - process:
+              id: "environment_understanding"
+              name: "Establish SOP Context"
+              
+              acceptance_criteria:
+                - "Document type correctly identified"
+                - "Vendor context fully populated"
+                - "Organization data retrieved"
+                - "All required policies accessible"
+              
+              actions:
+                - action:
+                    id: "extract_initial_metadata"
+                    type: "quick_extraction"
+                    
+                    acceptance_criteria:
+                      - "Vendor identification successful"
+                      - "Document type determined"
+                      - "Basic metadata extracted"
+
+                    outputs:
+                      success:
+                        - "preliminary_vendor_id"
+                        - "document_type"
+                        - "extraction_confidence"
+                      failure:
+                        - "extraction_errors"
+                        - "manual_review_required"
+                
+                - action:
+                    id: "build_sop_context"
+                    type: "context_creation"
+                    
+                    acceptance_criteria:
+                      - "Vendor validated against master data"
+                      - "Organization context complete"
+                      - "Initial policy set loaded"
+                    
+                    outputs:
+                      success:
+                        - "sop_context"
+                        - "applicable_policies"
+                        - "context_id"
+                      failure:
+                        - "missing_context_elements"
+                        - "policy_load_errors"
+
+    - node:
+        id: "metadata_extraction"
+        name: "Metadata Extraction"
+        type: "processing"
+        depends_on: ["sop_start"]
+        
+        acceptance_criteria:
+          - "All mandatory fields extracted with confidence > 0.8"
+          - "Line items accurately captured"
+          - "Metadata stored in metastore"
+          - "Knowledge index updated"
+
+    - node:
+        id: "validation_and_matching"
+        name: "Validation and Matching"
+        type: "processing"
+        depends_on: ["metadata_extraction"]
+        
+        acceptance_criteria:
+          - "All validation rules applied based on policies"
+          - "Matching completed per policy requirements"
+          - "Variances calculated and within tolerance"
+          - "Results documented for audit trail"
+        
+        sub_processes:
+          - process:
+              id: "policy_retrieval"
+              name: "Retrieve Validation Policies"
+              
+              acceptance_criteria:
+                - "All applicable policies retrieved"
+                - "Policy conflicts resolved"
+                - "Policy version tracking maintained"
+              
+              actions:
+                - action:
+                    id: "fetch_validation_policies"
+                    type: "policy_query"
+                    
+                    acceptance_criteria:
+                      - "Tolerance policies loaded"
+                      - "Matching requirements determined"
+                      - "Discount eligibility rules available"
+                    
+                    instructions:
+                      - step: "retrieve_tolerance_policies"
+                        operation: "query_policy_store"
+                        params:
+                          policy_namespace: "tenant.policies.company_accounting_payment.tolerance"
+                          context:
+                            vendor_category: "${sop_context.vendor_context.vendor_category}"
+                            invoice_amount: "${metadata.total_amount}"
+                            document_type: "${sop_context.document_type}"
+                      - step: "retrieve_vendor_specific_policies"
+                        operation: "query_policy_store"
+                        params:
+                          policy_namespace: "tenant.policies.vendor_policies"
+                          context:
+                            vendor_id: "${metadata.vendor_id}"
+                            vendor_tier: "${sop_context.vendor_context.vendor_tier}"
+                      - step: "retrieve_discount_policies"
+                        operation: "query_policy_store"
+                        params:
+                          policy_namespace: "tenant.policies.company_accounting_payment.discounts"
+                          context:
+                            vendor_id: "${metadata.vendor_id}"
+                            payment_terms: "${metadata.payment_terms}"
+                            preferred_vendor: "${sop_context.vendor_context.preferred_vendor}"
+                      - step: "retrieve_bulk_payment_policies"
+                        operation: "query_policy_store"
+                        params:
+                          policy_namespace: "tenant.policies.company_accounting_payment.bulk_payments"
+                          context:
+                            vendor_id: "${metadata.vendor_id}"
+                            invoice_count: "${vendor.pending_invoice_count}"
+                      - step: "retrieve_matching_requirements"
+                        operation: "query_policy_store"
+                        params:
+                          policy_namespace: "tenant.policies.sop_policies.matching"
+                          context:
+                            vendor_category: "${sop_context.vendor_context.vendor_category}"
+                            invoice_amount: "${metadata.total_amount}"
+                            has_po: "${metadata.po_number != null}"
+                            document_type: "${sop_context.document_type}"
+                    
+                    outputs:
+                      success:
+                        - "tolerance_policies"
+                        - "vendor_policies"
+                        - "discount_policies"
+                        - "bulk_payment_policies"
+                        - "matching_type_required"
+                        - "matching_tolerance_policies"
+                        - "policy_versions"
+                      failure:
+                        - "policy_retrieval_errors"
+                        - "missing_policies"
+                        - "default_policies_applied"
+
+          - process:
+              id: "field_validation"
+              name: "Validate Invoice Fields"
+              
+              acceptance_criteria:
+                - "All mandatory fields validated"
+                - "Tolerance checks completed"
+                - "Discount eligibility determined"
+                - "Validation results categorized by severity"
+              
+              actions:
+                - action:
+                    id: "apply_validation_rules"
+                    type: "validation"
+                    
+                    acceptance_criteria:
+                      - "No critical validation failures"
+                      - "Warnings documented"
+                      - "Business rules satisfied"
+                    
+                    instructions:
+                      - step: "validate_mandatory_fields"
+                        operation: "check_required_fields"
+                        params:
+                          schema: "invoice_metadata"
+                          context_schema: "${sop_context.document_type}_requirements"
+                          strict_mode: true
+                      - step: "validate_amount_tolerances"
+                        operation: "apply_tolerance_policies"
+                        params:
+                          policies: "${tolerance_policies}"
+                          amount_fields: ["total_amount", "tax_amount", "line_items_amounts"]
+                          vendor_specific_tolerance: "${vendor_policies.tolerance_overrides}"
+                      - step: "validate_discount_eligibility"
+                        operation: "check_discount_policies"
+                        params:
+                          policies: "${discount_policies}"
+                          payment_terms: "${metadata.payment_terms}"
+                          invoice_date: "${metadata.invoice_date}"
+                          early_payment_check: true
+                      - step: "validate_bulk_payment_eligibility"
+                        operation: "check_bulk_policies"
+                        params:
+                          policies: "${bulk_payment_policies}"
+                          vendor_invoices: "${vendor.pending_invoices}"
+                          total_amount_threshold: "${bulk_payment_policies.min_total_amount}"
+                      - step: "validate_tax_calculations"
+                        operation: "verify_tax_amounts"
+                        params:
+                          tax_rules: "${policy_store.company_accounting_payment.tax_rules}"
+                          line_items: "${line_items}"
+                          vendor_tax_exempt: "${vendor_policies.tax_exempt_status}"
+                      - step: "validate_gl_coding"
+                        operation: "verify_gl_accounts"
+                        params:
+                          line_items: "${line_items}"
+                          valid_gl_accounts: "${sop_context.org_data.gl_account_list}"
+                          cost_center_mapping: "${sop_context.org_data.cost_center_rules}"
+                    
+                    outputs:
+                      success:
+                        - "validation_results"
+                        - "validation_summary"
+                        - "eligible_discounts"
+                        - "bulk_payment_eligible"
+                        - "severity_breakdown"
+                      failure:
+                        - "critical_violations"
+                        - "validation_errors"
+                        - "policy_breaches"
+                      warning:
+                        - "validation_warnings"
+                        - "override_required"
+                        - "manual_review_fields"
+
+          - process:
+              id: "document_matching"
+              name: "Match Related Documents"
+              condition: "${matching_type_required != 'none'}"
+              
+              acceptance_criteria:
+                - "Required documents retrieved"
+                - "Matching completed per policy"
+                - "Variances within tolerance"
+                - "Matching score calculated"
+              
+              actions:
+                - action:
+                    id: "retrieve_matching_documents"
+                    type: "document_query"
+                    
+                    acceptance_criteria:
+                      - "All required documents found"
+                      - "Document versions validated"
+                      - "Document relationships verified"
+                    
+                    instructions:
+                      - step: "identify_po_number"
+                        operation: "extract_po_reference"
+                        params:
+                          source_fields: ["po_number", "extracted_text", "line_item_references"]
+                          pattern_matching: true
+                          fuzzy_matching: true
+                      - step: "retrieve_purchase_order"
+                        operation: "query_document_store"
+                        params:
+                          document_type: "purchase_order"
+                          po_number: "${extracted_po_number}"
+                          vendor_id: "${metadata.vendor_id}"
+                          status_filter: ["approved", "partially_received"]
+                      - step: "retrieve_goods_receipt"
+                        operation: "query_document_store"
+                        params:
+                          document_type: "goods_receipt_note"
+                          po_number: "${extracted_po_number}"
+                          vendor_id: "${metadata.vendor_id}"
+                          date_range_check: true
+                        condition: "${matching_type_required == 'three_way'}"
+                      - step: "retrieve_vendor_contract"
+                        operation: "query_document_store"
+                        params:
+                          document_type: "vendor_contract"
+                          vendor_id: "${metadata.vendor_id}"
+                          active_only: true
+                        condition: "${matching_type_required == 'contract_based'}"
+                    
+                    outputs:
+                      success:
+                        - "purchase_order_data"
+                        - "goods_receipt_data"
+                        - "contract_data"
+                        - "documents_found"
+                        - "document_relationships"
+                      failure:
+                        - "missing_documents"
+                        - "document_retrieval_errors"
+                      partial:
+                        - "partial_documents"
+                        - "incomplete_matching_set"
+
+                - action:
+                    id: "perform_matching"
+                    type: "matching"
+                    
+                    acceptance_criteria:
+                      - "Matching logic executed per policy"
+                      - "Variance calculations accurate"
+                      - "Tolerance breaches identified"
+                      - "Matching score >= policy minimum"
+                    
+                    instructions:
+                      - step: "two_way_matching"
+                        operation: "match_invoice_to_po"
+                        params:
+                          invoice_data: "${metadata}"
+                          po_data: "${purchase_order_data}"
+                          tolerance_policies: "${matching_tolerance_policies}"
+                          match_fields:
+                            - field: "vendor_id"
+                              weight: 1.0
+                              exact_match: true
+                            - field: "total_amount"
+                              weight: 0.8
+                              tolerance_percent: 5
+                            - field: "line_items"
+                              weight: 0.9
+                              line_level_matching: true
+                        condition: "${matching_type_required == 'two_way'}"
+                      
+                      - step: "three_way_matching"
+                        operation: "match_invoice_po_grn"
+                        params:
+                          invoice_data: "${metadata}"
+                          po_data: "${purchase_order_data}"
+                          grn_data: "${goods_receipt_data}"
+                          tolerance_policies: "${matching_tolerance_policies}"
+                          match_fields:
+                            - field: "vendor_id"
+                              weight: 1.0
+                              across_all_docs: true
+                            - field: "quantities"
+                              weight: 0.9
+                              quantity_tolerance_percent: 2
+                            - field: "amounts"
+                              weight: 0.85
+                              amount_tolerance_percent: 3
+                            - field: "line_items"
+                              weight: 0.9
+                              match_by_item_code: true
+                        condition: "${matching_type_required == 'three_way'}"
+                      
+                      - step: "calculate_variances"
+                        operation: "compute_match_variances"
+                        params:
+                          comparison_method: "line_by_line"
+                          aggregate_variances: true
+                          variance_categories: ["quantity", "price", "amount", "tax"]
+                      
+                      - step: "apply_tolerance_rules"
+                        operation: "check_variance_tolerance"
+                        params:
+                          variances: "${calculated_variances}"
+                          tolerance_policies: "${matching_tolerance_policies}"
+                          vendor_specific_tolerance: "${vendor_policies.matching_tolerance}"
+                      
+                      - step: "calculate_matching_score"
+                        operation: "compute_overall_score"
+                        params:
+                          scoring_method: "weighted_average"
+                          include_variance_impact: true
+                    
+                    outputs:
+                      success:
+                        - "matching_results"
+                        - "variance_details"
+                        - "matching_score"
+                        - "tolerance_status"
+                        - "matched_line_items"
+                      failure:
+                        - "matching_failures"
+                        - "tolerance_breaches"
+                        - "unmatched_items"
+                      partial:
+                        - "partial_match_results"
+                        - "items_requiring_review"
+                        - "conditional_matches"
+
+    - node:
+        id: "review"
+        name: "Review"
+        type: "human_task"
+        depends_on: ["validation_and_matching"]
+        
+        acceptance_criteria:
+          - "Review requirements determined by policy"
+          - "Reviewers assigned per workflow type"
+          - "Review decisions captured with justification"
+          - "SLA compliance maintained"
+        
+        sub_processes:
+          - process:
+              id: "review_policy_retrieval"
+              name: "Retrieve Review Policies"
+              
+              acceptance_criteria:
+                - "Review necessity determined"
+                - "Workflow type identified"
+                - "Reviewer roles defined"
+
+          - process:
+              id: "reviewer_assignment"
+              name: "Assign Reviewers"
+              condition: "${review_required == true}"
+              
+          - process:
+              id: "review_execution"
+              name: "Execute Review Process"
+              condition: "${review_required == true}"
+              
+              acceptance_criteria:
+                - "All reviews completed"
+                - "Decisions documented"
+                - "Consensus achieved (if required)"
+                - "Audit trail complete"
+
+    - node:
+        id: "approval"
+        name: "Approval"
+        type: "approval_workflow"
+        depends_on: ["review"]
+        
+        acceptance_criteria:
+          - "Approval matrix correctly applied"
+          - "All required approvals obtained"
+          - "Delegation rules followed"
+          - "Audit trail maintained"
+        
+        sub_processes:
+          - process:
+              id: "approval_policy_retrieval"
+              name: "Retrieve Approval Policies"
+              
+              acceptance_criteria:
+                - "Approval requirements determined"
+                - "Authority levels verified"
+                - "Auto-approval eligibility checked"
+           
+          - process:
+              id: "approver_assignment"
+              name: "Assign Approvers"
+              condition: "${auto_approval_eligible == false}"
+              
+              acceptance_criteria:
+                - "Approvers have required authority"
+                - "Approval chain established"
+                - "Delegates properly authorized"
+              
+          - process:
+              id: "approval_execution"
+              name: "Execute Approval Process"
+              
+              acceptance_criteria:
+                - "Approval obtained per policy"
+                - "Conditions documented"
+                - "Final status determined"
+          
+
+# Policy Examples
+policy_examples:
+  tolerance_policy:
+    id: "POL-TOL-001"
+    name: "Invoice Amount Tolerance Policy"
+    category: "company_accounting_payment"
+    rules:
+      - condition: "invoice_amount > 100000 AND vendor_tier != 'strategic'"
+        action: "flag_for_executive_review"
+        tolerance_percent: 0
+      - condition: "invoice_amount BETWEEN 50000 AND 100000"
+        action: "require_department_head_approval"
+        tolerance_percent: 2
+      - condition: "vendor_tier == 'preferred'"
+        action: "apply_preferred_vendor_tolerance"
+        tolerance_percent: 5
+
+  matching_policy:
+    id: "POL-MATCH-001"
+    name: "Document Matching Requirements"
+    category: "sop_policies"
+    rules:
+      - condition: "vendor_category == 'goods_supplier' AND invoice_amount > 5000"
+        matching_type: "three_way"
+        documents: ["purchase_order", "goods_receipt_note", "invoice"]
+        tolerance:
+          quantity: 2
+          amount: 3
+      - condition: "vendor_category == 'service_provider'"
+        matching_type: "two_way"
+        documents: ["purchase_order", "invoice"]
+        tolerance:
+          amount: 5
+
+  vendor_policy:
+    id: "POL-VEND-001"
+    name: "Vendor Specific Policies"
+    category: "vendor_policies"
+    vendor_id: "VND-123456"
+    rules:
+      - type: "payment_terms"
+        standard_terms: "NET30"
+        early_payment_discount: 2
+        discount_terms: "2/10 NET30"
+      - type: "invoice_tolerance"
+        amount_tolerance_percent: 5
+        always_three_way_match: false
+      - type: "auto_approval"
+        enabled: true
+        max_amount: 10000
